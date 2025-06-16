@@ -3,6 +3,7 @@ import { Client, GatewayIntentBits, Collection, Events } from 'discord.js';
 import fs from 'fs';
 import path from 'path';
 import 'dotenv/config';
+import { REST, Routes } from 'discord.js';
 
 // --- Express server for Render port detection ---
 const app = express();
