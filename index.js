@@ -1,5 +1,4 @@
-// VERSION BETA - ONLY SUBMITS COMMANDS TO ONE SERVER
-
+// index.js
 import express from 'express';
 import { Client, GatewayIntentBits, Collection, Events, REST, Routes } from 'discord.js';
 import fs from 'fs';
@@ -23,8 +22,8 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
+    GatewayIntentBits.MessageContent,
+  ],
 });
 
 client.commands = new Collection();
@@ -35,32 +34,23 @@ const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('
 
 for (const file of commandFiles) {
   const filePath = path.join(commandsPath, file);
-  const commandModule = await import(`file://${filePath}`);
-  const command = commandModule.default;
-
-  if (!command?.data?.name || typeof command.execute !== 'function') {
+  const command = await import(`file://${filePath}`);
+  // Make sure your command export has 'data' and 'execute'
+  if (command.data && command.execute) {
+    client.commands.set(command.data.name, command);
+  } else {
     console.warn(`⚠️ Skipping '${file}' - invalid command structure`);
-    continue;
   }
-
-  client.commands.set(command.data.name, command);
 }
 
-// === Register Slash Commands Per-Guild ===
+// === Register Slash Commands Globally AND Per-Guild ===
 async function registerCommands() {
   const commands = [];
 
   for (const file of commandFiles) {
     const filePath = path.join(commandsPath, file);
-    const commandModule = await import(`file://${filePath}`);
-    const command = commandModule.default;
-
-    if (!command?.data?.toJSON) {
-      console.warn(`⚠️ Skipping '${file}' during registration`);
-      continue;
-    }
-
-    commands.push(command.data.toJSON());
+    const command = await import(`file://${filePath}`);
+    if (command.data) commands.push(command.data.toJSON());
   }
 
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -72,39 +62,40 @@ async function registerCommands() {
       { body: commands }
     );
     console.log('✅ Slash commands registered to GUILD!');
+
+    console.log('🌍 Registering GLOBAL slash commands...');
+    await rest.put(
+      Routes.applicationCommands(process.env.CLIENT_ID),
+      { body: commands }
+    );
+    console.log('✅ Slash commands registered GLOBALLY!');
   } catch (error) {
     console.error('❌ Failed to register commands:', error);
   }
 }
 
-// === Event: Bot is Ready ===
+// === Bot Ready Event ===
 client.once(Events.ClientReady, () => {
   console.log(`✅ Logged in as ${client.user.tag}! Nexus is online!`);
 });
 
-// === Event: Command Interaction ===
+// === Interaction Create Event ===
 client.on(Events.InteractionCreate, async interaction => {
   if (!interaction.isCommand()) return;
 
   const command = client.commands.get(interaction.commandName);
-
   if (!command) return;
 
   try {
     await command.execute(interaction);
   } catch (error) {
     console.error('❌ Error executing command:', error);
-    try {
-      await interaction.reply({
-        content: 'There was an error executing this command 😢',
-        ephemeral: true,
-      });
-    } catch (err) {
-      console.error('⚠️ Failed to send error reply:', err);
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({ content: 'There was an error executing this command 😢', ephemeral: true });
     }
   }
 });
 
-// === Start Everything ===
+// === Start Bot ===
 await registerCommands();
 client.login(process.env.DISCORD_TOKEN);
