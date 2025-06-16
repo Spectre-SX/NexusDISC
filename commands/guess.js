@@ -8,7 +8,7 @@ import {
   TextInputStyle,
   EmbedBuilder,
   ComponentType,
-  InteractionType
+  Events
 } from 'discord.js';
 
 export const data = new SlashCommandBuilder()
@@ -44,24 +44,25 @@ export async function execute(interaction) {
 
   const collector = message.createMessageComponentCollector({
     componentType: ComponentType.Button,
-    time: 60_000
+    time: 60000
   });
 
-  collector.on('collect', async (btnInteraction) => {
-    if (btnInteraction.user.id !== interaction.user.id)
-      return btnInteraction.reply({ content: 'Bro this ain’t your game 😤', ephemeral: true });
+  collector.on('collect', async (btn) => {
+    if (btn.user.id !== interaction.user.id) {
+      return btn.reply({ content: "Yo, this ain't your game 😤", ephemeral: true });
+    }
 
-    if (btnInteraction.customId === 'guess_giveup') {
-      await btnInteraction.update({
+    if (btn.customId === 'guess_giveup') {
+      await btn.update({
         content: `😢 You gave up! The number was **${targetNumber}**.`,
-        embeds: [],
-        components: []
+        components: [],
+        embeds: []
       });
       collector.stop();
       return;
     }
 
-    if (btnInteraction.customId === 'guess_input') {
+    if (btn.customId === 'guess_input') {
       const modal = new ModalBuilder()
         .setCustomId('guess_modal')
         .setTitle('Your Guess');
@@ -76,42 +77,37 @@ export async function execute(interaction) {
       const row = new ActionRowBuilder().addComponents(input);
       modal.addComponents(row);
 
-      await btnInteraction.showModal(modal);
-    }
-  });
+      await btn.showModal(modal);
 
-  // Handle modal submission
-  const modalCollector = interaction.channel.createMessageComponentCollector({
-    componentType: ComponentType.ModalSubmit,
-    time: 60_000
-  });
+      // Wait for the modal submission
+      const modalInteraction = await btn.awaitModalSubmit({
+        time: 30000,
+        filter: i => i.user.id === btn.user.id && i.customId === 'guess_modal'
+      }).catch(() => null);
 
-  modalCollector.on('collect', async (modalInteraction) => {
-    if (modalInteraction.customId !== 'guess_modal') return;
+      if (!modalInteraction) {
+        return btn.followUp({ content: '⏱️ You didn’t respond in time!', ephemeral: true });
+      }
 
-    const inputValue = modalInteraction.fields.getTextInputValue('guess_number');
-    const guess = parseInt(inputValue);
+      const guess = parseInt(modalInteraction.fields.getTextInputValue('guess_number'));
 
-    if (isNaN(guess) || guess < 1 || guess > 10) {
-      return modalInteraction.reply({
-        content: '❌ That’s not a valid number between 1 and 10!',
-        ephemeral: true
-      });
-    }
+      if (isNaN(guess) || guess < 1 || guess > 10) {
+        return modalInteraction.reply({ content: '⚠️ Invalid number! Enter a number from 1 to 10.', ephemeral: true });
+      }
 
-    if (guess === targetNumber) {
-      await modalInteraction.update({
-        content: `🎉 GG! You guessed it! The number was **${targetNumber}**.`,
-        embeds: [],
-        components: []
-      });
-      collector.stop();
-      modalCollector.stop();
-    } else {
-      await modalInteraction.reply({
-        content: `❌ Nope! ${guess} is not it. Try again with the button.`,
-        ephemeral: true
-      });
+      if (guess === targetNumber) {
+        await modalInteraction.update({
+          content: `🎉 GG! You guessed it right. The number was **${targetNumber}**!`,
+          components: [],
+          embeds: []
+        });
+        collector.stop();
+      } else {
+        await modalInteraction.reply({
+          content: `❌ Nope! ${guess} ain't it. Try again with the button.`,
+          ephemeral: true
+        });
+      }
     }
   });
 
@@ -120,8 +116,8 @@ export async function execute(interaction) {
       await interaction.editReply({
         components: []
       });
-    } catch (e) {
-      // Ignore if already updated
+    } catch (err) {
+      // ignore if already updated
     }
   });
 }
