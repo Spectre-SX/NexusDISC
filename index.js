@@ -35,16 +35,31 @@ const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('
 
 for (const file of commandFiles) {
   const filePath = path.join(commandsPath, file);
-  const command = await import(`file://${filePath}`);
+  const commandModule = await import(`file://${filePath}`);
+  const command = commandModule.default;
+
+  if (!command?.data?.name || typeof command.execute !== 'function') {
+    console.warn(`⚠️ Skipping '${file}' - invalid command structure`);
+    continue;
+  }
+
   client.commands.set(command.data.name, command);
 }
 
 // === Register Slash Commands Per-Guild ===
 async function registerCommands() {
   const commands = [];
+
   for (const file of commandFiles) {
     const filePath = path.join(commandsPath, file);
-    const command = await import(`file://${filePath}`);
+    const commandModule = await import(`file://${filePath}`);
+    const command = commandModule.default;
+
+    if (!command?.data?.toJSON) {
+      console.warn(`⚠️ Skipping '${file}' during registration`);
+      continue;
+    }
+
     commands.push(command.data.toJSON());
   }
 
@@ -79,7 +94,14 @@ client.on(Events.InteractionCreate, async interaction => {
     await command.execute(interaction);
   } catch (error) {
     console.error('❌ Error executing command:', error);
-    await interaction.reply({ content: 'There was an error executing this command 😢', ephemeral: true });
+    try {
+      await interaction.reply({
+        content: 'There was an error executing this command 😢',
+        ephemeral: true,
+      });
+    } catch (err) {
+      console.error('⚠️ Failed to send error reply:', err);
+    }
   }
 });
 
