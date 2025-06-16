@@ -1,88 +1,70 @@
-import { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } from 'discord.js';
+import { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 
 const MAX_NUMBER = 100;
 
 export const data = new SlashCommandBuilder()
   .setName('guess')
-  .setDescription('Play the number guessing game! Guess a number between 1 and 100.')
-  .addIntegerOption(option =>
-    option.setName('number')
-      .setDescription('Your guess')
-      .setRequired(true)
-      .setMinValue(1)
-      .setMaxValue(MAX_NUMBER));
+  .setDescription('Start a number guessing game!');
 
 export async function execute(interaction) {
-  // Initialize game target if none exists
-  if (!interaction.client.guessTarget) {
-    interaction.client.guessTarget = Math.floor(Math.random() * MAX_NUMBER) + 1;
-    interaction.client.gameFinished = false;
-  }
+  // Start the game by generating a target number and saving in client
+  interaction.client.guessTarget = Math.floor(Math.random() * MAX_NUMBER) + 1;
+  interaction.client.guessActive = true;
 
+  await interaction.reply({
+    content: `I picked a number between 1 and ${MAX_NUMBER}. Try to guess it by typing /guess <number>!`,
+    ephemeral: true,
+  });
+}
+
+// This is a separate command for the actual guess input, so you can do: /guess 42
+// Or if you want the guess input as an option on the same command, just adjust accordingly
+
+export async function handleGuess(interaction, guess) {
   const target = interaction.client.guessTarget;
-  const guess = interaction.options.getInteger('number');
+  const active = interaction.client.guessActive;
 
-  // Play Again button setup
-  const playAgainRow = new ActionRowBuilder()
-    .addComponents(
-      new ButtonBuilder()
-        .setCustomId('play_again')
-        .setLabel('Play Again')
-        .setStyle(ButtonStyle.Primary),
-    );
-
-  // If game already finished, prevent guesses until restart
-  if (interaction.client.gameFinished) {
-    await interaction.reply({ content: 'The game has ended! Click **Play Again** to start a new game.', components: [playAgainRow], ephemeral: true });
-    return;
+  if (!active) {
+    return interaction.reply({ content: 'No active game! Use /guess to start one.', ephemeral: true });
   }
 
-  // First interaction - use reply; subsequent guesses - use followUp
-  const replyMethod = interaction.replied || interaction.deferred ? 'followUp' : 'reply';
+  if (typeof guess !== 'number' || guess < 1 || guess > MAX_NUMBER) {
+    return interaction.reply({ content: `Your guess must be a number between 1 and ${MAX_NUMBER}.`, ephemeral: true });
+  }
 
   if (guess === target) {
-    interaction.client.gameFinished = true;
+    interaction.client.guessActive = false; // end game
 
-    await interaction[replyMethod]({
-      content: `🎉 Congrats, you guessed it right! The number was **${target}**.`,
-      components: [playAgainRow],
-      ephemeral: true,
+    // Show congrats + "Play Again" button
+    const playAgainButton = new ButtonBuilder()
+      .setCustomId('playAgain')
+      .setLabel('Play Again')
+      .setStyle(ButtonStyle.Primary);
+
+    const row = new ActionRowBuilder().addComponents(playAgainButton);
+
+    await interaction.reply({
+      content: `🎉 You guessed it! The number was **${target}**.`,
+      components: [row],
+      ephemeral: false,
     });
-
-    // Wait for the user to press the Play Again button
-    const filter = i => i.customId === 'play_again' && i.user.id === interaction.user.id;
-
-    try {
-      const buttonInteraction = await interaction.channel.awaitMessageComponent({
-        filter,
-        componentType: ComponentType.Button,
-        time: 60000,
-      });
-
-      // Reset game state
-      interaction.client.guessTarget = Math.floor(Math.random() * MAX_NUMBER) + 1;
-      interaction.client.gameFinished = false;
-
-      await buttonInteraction.update({
-        content: `🔄 New game started! Guess a number between 1 and ${MAX_NUMBER}.`,
-        components: [],
-      });
-    } catch {
-      // Timeout: disable button after 60 seconds
-      await interaction.editReply({
-        components: [new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId('play_again')
-            .setLabel('Play Again')
-            .setStyle(ButtonStyle.Primary)
-            .setDisabled(true)
-        )],
-      });
-    }
-
   } else if (guess > target) {
-    await interaction[replyMethod]({ content: `⬇️ ${guess} is too high! Try a lower number.`, ephemeral: true });
+    await interaction.reply({ content: `⬇️ ${guess} is too high! Try a lower number.`, ephemeral: true });
   } else {
-    await interaction[replyMethod]({ content: `⬆️ ${guess} is too low! Try a higher number.`, ephemeral: true });
+    await interaction.reply({ content: `⬆️ ${guess} is too low! Try a higher number.`, ephemeral: true });
+  }
+}
+
+// You also need to handle the button click to restart the game:
+
+export async function handleButton(interaction) {
+  if (interaction.customId === 'playAgain') {
+    interaction.client.guessTarget = Math.floor(Math.random() * MAX_NUMBER) + 1;
+    interaction.client.guessActive = true;
+
+    await interaction.update({
+      content: `Game restarted! I've picked a new number between 1 and ${MAX_NUMBER}. Guess it by typing /guess <number>.`,
+      components: [],
+    });
   }
 }
