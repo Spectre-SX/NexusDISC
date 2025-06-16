@@ -1,9 +1,18 @@
-import { REST, Routes } from 'discord.js';
 import fs from 'fs';
 import path from 'path';
+import { REST, Routes } from 'discord.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
+
+const token = process.env.DISCORD_TOKEN;           // You dont got this
+const clientId = process.env.CLIENT_ID;            // You dont got this
+const guildId = process.env.GUILD_ID;              // You dont got this
+
+if (!token || !clientId || !guildId) {
+  console.error('Missing DISCORD_TOKEN, CLIENT_ID, or GUILD_ID in environment variables.');
+  process.exit(1);
+}
 
 const commands = [];
 const commandsPath = path.resolve('./commands');
@@ -11,22 +20,28 @@ const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('
 
 for (const file of commandFiles) {
   const filePath = path.join(commandsPath, file);
-  const command = await import(`file://${filePath}`);
-  commands.push(command.default.data.toJSON());
+  const commandModule = await import(`file://${filePath}`);
+  const command = commandModule.default;
+  if ('data' in command && 'toJSON' in command.data) {
+    commands.push(command.data.toJSON());
+  } else {
+    console.warn(`Command at ${file} is missing 'data' or 'toJSON' method.`);
+  }
 }
 
-const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
+const rest = new REST({ version: '10' }).setToken(token);
 
 (async () => {
   try {
-    console.log('Started refreshing application (/) commands.');
+    console.log(`Started refreshing ${commands.length} application (slash) commands.`);
 
-    await rest.put(
-      Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
+    // Register commands to a single guild (for testing)
+    const data = await rest.put(
+      Routes.applicationGuildCommands(clientId, guildId),
       { body: commands },
     );
 
-    console.log('Successfully reloaded application (/) commands.');
+    console.log(`Successfully reloaded ${data.length} guild commands.`);
   } catch (error) {
     console.error(error);
   }
