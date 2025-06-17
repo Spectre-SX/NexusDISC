@@ -50,9 +50,8 @@ export async function execute(interaction) {
 
   const menuEmbed = new EmbedBuilder()
     .setTitle('🌍 Flag Guessing Game')
-    .setDescription('Can you guess the country from its flag?\nChoose a difficulty to begin:')
-    .setColor('Random')
-    .setFooter({ text: 'Try impossible if you dare 🧠💀' });
+    .setDescription('Choose a difficulty to start. You’ll get 3 flags to guess!')
+    .setColor('Random');
 
   const buttons = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -87,37 +86,58 @@ export async function execute(interaction) {
       return i.reply({ content: 'This isn’t your game 😅', ephemeral: true });
 
     const diff = i.customId.split('_')[1];
-    const pool = difficulties[diff];
-    const selected = pool[Math.floor(Math.random() * pool.length)];
+    const pool = [...difficulties[diff]];
+    let score = 0;
+    let round = 0;
 
-    const flagEmbed = new EmbedBuilder()
-      .setTitle('🧠 Guess the Flag!')
-      .setDescription('Which country is this flag from?\nType your answer below!')
-      .setImage(selected.url)
-      .setColor('Blue');
-
-    await i.update({ embeds: [flagEmbed], components: [] });
-
-    const filter = m => m.author.id === i.user.id;
-    const guessCollector = i.channel.createMessageCollector({ filter, time: 15000, max: 1 });
-
-    guessCollector.on('collect', async m => {
-      const guess = m.content.trim().toLowerCase();
-      if (guess === selected.answer.toLowerCase()) {
-        await m.reply('✅ Correct! Big brain energy 💪');
-      } else {
-        await m.reply(`❌ Wrong! It was **${selected.answer}** 😬`);
-      }
-    });
-
-    guessCollector.on('end', async collected => {
-      if (collected.size === 0) {
-        await i.followUp({
-          content: `⌛ Time’s up! The answer was **${selected.answer}**.`,
-          ephemeral: true
+    const runRound = async () => {
+      if (round >= 3) {
+        return i.followUp({
+          content: `🏁 Game over! You got **${score} out of 3** correct.`,
         });
       }
-    });
+
+      const index = Math.floor(Math.random() * pool.length);
+      const flag = pool.splice(index, 1)[0]; // remove used flag
+      round++;
+
+      const flagEmbed = new EmbedBuilder()
+        .setTitle(`Round ${round}/3`)
+        .setDescription('Guess the country this flag belongs to:')
+        .setImage(flag.url)
+        .setColor('Blue');
+
+      await i.followUp({ embeds: [flagEmbed] });
+
+      const msgFilter = m => m.author.id === i.user.id;
+      const answerCollector = i.channel.createMessageCollector({
+        filter: msgFilter,
+        time: 15000,
+        max: 1
+      });
+
+      answerCollector.on('collect', async m => {
+        if (m.content.trim().toLowerCase() === flag.answer.toLowerCase()) {
+          await m.reply('✅ Correct!');
+          score++;
+        } else {
+          await m.reply(`❌ Nope! The correct answer was **${flag.answer}**`);
+        }
+        runRound(); // next round
+      });
+
+      answerCollector.on('end', collected => {
+        if (collected.size === 0) {
+          i.followUp({
+            content: `⏱️ Time’s up! The answer was **${flag.answer}**.`,
+          });
+          runRound(); // next round
+        }
+      });
+    };
+
+    await i.update({ components: [], embeds: [] }); // remove menu
+    runRound(); // start 1st round
   });
 
   collector.on('end', collected => {
