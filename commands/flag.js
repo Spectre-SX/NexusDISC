@@ -1,133 +1,172 @@
-import { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ComponentType } from 'discord.js';
+import {
+  SlashCommandBuilder,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ComponentType,
+} from 'discord.js';
 
-const flags = {
+const countries = {
   easy: [
-    { country: 'France', emoji: '🇫🇷' },
-    { country: 'Germany', emoji: '🇩🇪' },
-    { country: 'United States', emoji: '🇺🇸' },
-    { country: 'United Kingdom', emoji: '🇬🇧' },
-    { country: 'Canada', emoji: '🇨🇦' },
+    { name: 'United States', code: 'us' },
+    { name: 'United Kingdom', code: 'gb' },
+    { name: 'France', code: 'fr' },
+    { name: 'Germany', code: 'de' },
+    { name: 'Canada', code: 'ca' },
+    { name: 'Japan', code: 'jp' },
+    { name: 'Italy', code: 'it' },
+    { name: 'Brazil', code: 'br' },
+    { name: 'Australia', code: 'au' },
+    { name: 'Spain', code: 'es' },
   ],
   medium: [
-    { country: 'Argentina', emoji: '🇦🇷' },
-    { country: 'South Korea', emoji: '🇰🇷' },
-    { country: 'Portugal', emoji: '🇵🇹' },
-    { country: 'Thailand', emoji: '🇹🇭' },
-    { country: 'Ukraine', emoji: '🇺🇦' },
+    { name: 'Thailand', code: 'th' },
+    { name: 'Chile', code: 'cl' },
+    { name: 'Greece', code: 'gr' },
+    { name: 'Poland', code: 'pl' },
+    { name: 'Sweden', code: 'se' },
+    { name: 'Argentina', code: 'ar' },
+    { name: 'Vietnam', code: 'vn' },
+    { name: 'Colombia', code: 'co' },
+    { name: 'Norway', code: 'no' },
+    { name: 'Portugal', code: 'pt' },
   ],
   hard: [
-    { country: 'Albania', emoji: '🇦🇱' },
-    { country: 'Monaco', emoji: '🇲🇨' },
-    { country: 'Montenegro', emoji: '🇲🇪' },
-    { country: 'Estonia', emoji: '🇪🇪' },
-    { country: 'Moldova', emoji: '🇲🇩' },
+    { name: 'Albania', code: 'al' },
+    { name: 'Monaco', code: 'mc' },
+    { name: 'Montenegro', code: 'me' },
+    { name: 'Moldova', code: 'md' },
+    { name: 'Liechtenstein', code: 'li' },
+    { name: 'Malta', code: 'mt' },
+    { name: 'Andorra', code: 'ad' },
+    { name: 'Luxembourg', code: 'lu' },
+    { name: 'San Marino', code: 'sm' },
+    { name: 'Iceland', code: 'is' },
   ],
   impossible: [
-    { country: 'Eswatini', emoji: '🇸🇿' },
-    { country: 'Bhutan', emoji: '🇧🇹' },
-    { country: 'Vanuatu', emoji: '🇻🇺' },
-    { country: 'Kiribati', emoji: '🇰🇮' },
-    { country: 'Comoros', emoji: '🇰🇲' },
-  ]
+    { name: 'Bhutan', code: 'bt' },
+    { name: 'Kiribati', code: 'ki' },
+    { name: 'Comoros', code: 'km' },
+    { name: 'Nauru', code: 'nr' },
+    { name: 'Tuvalu', code: 'tv' },
+    { name: 'São Tomé and Príncipe', code: 'st' },
+    { name: 'Togo', code: 'tg' },
+    { name: 'Vanuatu', code: 'vu' },
+    { name: 'Palau', code: 'pw' },
+    { name: 'Lesotho', code: 'ls' },
+  ],
 };
 
-export const data = new SlashCommandBuilder()
-  .setName('flag')
-  .setDescription('Start a flag guessing game');
+// Helper to get random country from difficulty pool
+function getRandomCountry(difficulty) {
+  const pool = countries[difficulty];
+  return pool[Math.floor(Math.random() * pool.length)];
+}
 
-export async function execute(interaction) {
-  const embed = new EmbedBuilder()
-    .setTitle('🚩 Flag Guessing Game')
-    .setDescription('Choose your difficulty to begin.\nYou will get 3 rounds to guess the correct flag.')
-    .setColor('Blue');
+const roundsPerGame = 3;
 
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('flag_easy').setLabel('Easy').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId('flag_medium').setLabel('Medium').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('flag_hard').setLabel('Hard').setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId('flag_impossible').setLabel('Impossible').setStyle(ButtonStyle.Secondary)
-  );
+export default {
+  data: new SlashCommandBuilder()
+    .setName('flag')
+    .setDescription('Play the flag guessing game')
+    .addSubcommand(sub =>
+      sub
+        .setName('game')
+        .setDescription('Start a flag guessing game'),
+    ),
 
-  await interaction.reply({ embeds: [embed], components: [row] });
-
-  const collector = interaction.channel.createMessageComponentCollector({
-    componentType: ComponentType.Button,
-    time: 15000
-  });
-
-  collector.on('collect', async i => {
-    if (i.user.id !== interaction.user.id)
-      return i.reply({ content: '❌ This game isn’t for you!', ephemeral: true });
-
-    const diff = i.customId.split('_')[1];
-    const pool = [...flags[diff]];
-    let score = 0;
-    let round = 0;
-
-    await i.deferUpdate(); // Avoid interaction failed
-    await i.editReply({ components: [], embeds: [] });
-
-    const runRound = async () => {
-      if (round >= 3) {
-        return interaction.followUp({
-          content: `🏁 Game over! You got **${score}/3** correct. 🎉`
-        });
-      }
-
-      const index = Math.floor(Math.random() * pool.length);
-      const correct = pool.splice(index, 1)[0];
-      const options = [correct];
-
-      while (options.length < 4) {
-        const rand = flags[diff][Math.floor(Math.random() * flags[diff].length)];
-        if (!options.some(opt => opt.country === rand.country)) options.push(rand);
-      }
-
-      options.sort(() => Math.random() - 0.5); // shuffle
-
+  async execute(interaction, client) {
+    if (interaction.options.getSubcommand() === 'game') {
       const embed = new EmbedBuilder()
-        .setTitle(`Round ${round + 1}`)
-        .setDescription(`Which country does this flag belong to?\n\n${correct.emoji}`)
-        .setColor('Purple');
-
-      const optionRow = new ActionRowBuilder().addComponents(
-        options.map((opt, idx) =>
-          new ButtonBuilder()
-            .setCustomId(`guess_${opt.country}`)
-            .setLabel(opt.country)
-            .setStyle(ButtonStyle.Secondary)
+        .setTitle('Flag Guessing Game 🎌')
+        .setDescription(
+          `Choose your difficulty and guess the country name based on the flag! You get ${roundsPerGame} rounds.\n\nClick a difficulty below to start!`
         )
+        .setColor('Random');
+
+      const buttons = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('flag_easy')
+          .setLabel('Easy')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId('flag_medium')
+          .setLabel('Medium')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('flag_hard')
+          .setLabel('Hard')
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId('flag_impossible')
+          .setLabel('Impossible')
+          .setStyle(ButtonStyle.Secondary),
       );
 
-      const msg = await interaction.followUp({ embeds: [embed], components: [optionRow], fetchReply: true });
+      await interaction.reply({ embeds: [embed], components: [buttons] });
 
-      const buttonCollector = msg.createMessageComponentCollector({
-        componentType: ComponentType.Button,
-        time: 15000,
-        max: 1
-      });
+      const filter = i => i.user.id === interaction.user.id && i.customId.startsWith('flag_');
+      const collector = interaction.channel.createMessageComponentCollector({ filter, time: 60000, max: 1 });
 
-      buttonCollector.on('collect', async btn => {
-        if (btn.user.id !== interaction.user.id)
-          return btn.reply({ content: 'Not your turn!', ephemeral: true });
+      collector.on('collect', async i => {
+        await i.deferUpdate();
 
-        const guessed = btn.customId.split('_')[1];
+        const difficulty = i.customId.split('_')[1];
 
-        await btn.deferUpdate();
-        await btn.editReply({ components: [] });
+        let score = 0;
+        let currentRound = 0;
 
-        if (guessed === correct.country) {
-          await interaction.followUp({ content: '✅ Correct!' });
-          score++;
-        } else {
-          await interaction.followUp({ content: `❌ Nope! The correct answer was **${correct.country}**.` });
+        async function playRound() {
+          currentRound++;
+          if (currentRound > roundsPerGame) {
+            return i.followUp({
+              content: `Game over! Your score: **${score} / ${roundsPerGame}**`,
+              ephemeral: true,
+            });
+          }
+
+          const country = getRandomCountry(difficulty);
+          const flagUrl = `https://flagcdn.com/w256/${country.code}.png`;
+
+          const roundEmbed = new EmbedBuilder()
+            .setTitle(`Round ${currentRound} - Difficulty: ${difficulty[0].toUpperCase() + difficulty.slice(1)}`)
+            .setDescription('Guess the country name for this flag! Type your answer in chat.')
+            .setImage(flagUrl)
+            .setColor('Random');
+
+          await i.followUp({ embeds: [roundEmbed], ephemeral: true });
+
+          // Wait for the user's message guess
+          const messageFilter = m => m.author.id === interaction.user.id;
+          const collected = await interaction.channel.awaitMessages({ filter: messageFilter, max: 1, time: 30000, errors: ['time'] }).catch(() => null);
+
+          if (!collected) {
+            await i.followUp({ content: 'Time is up! Moving to next round...', ephemeral: true });
+            return playRound();
+          }
+
+          const guess = collected.first().content.toLowerCase().trim();
+          const answer = country.name.toLowerCase();
+
+          if (guess === answer) {
+            score++;
+            await i.followUp({ content: `✅ Correct! The answer was **${country.name}**.`, ephemeral: true });
+          } else {
+            await i.followUp({ content: `❌ Wrong! The answer was **${country.name}**.`, ephemeral: true });
+          }
+
+          playRound();
         }
 
-        round++;
-        setTimeout(runRound, 1000); // wait before next round
+        playRound();
       });
-    };
 
-    runRound();
-  });
-}
+      collector.on('end', collected => {
+        if (collected.size === 0) {
+          interaction.editReply({ content: 'No difficulty selected, game cancelled.', components: [] });
+        }
+      });
+    }
+  },
+};
