@@ -1,8 +1,4 @@
-import { 
-  SlashCommandBuilder,
-  ChatInputCommandInteraction,
-  VoiceBasedChannel
-} from 'discord.js';
+import Discord from 'discord.js';
 import {
   joinVoiceChannel,
   createAudioPlayer,
@@ -12,119 +8,106 @@ import {
   VoiceConnectionStatus,
 } from '@discordjs/voice';
 import ytdl from 'ytdl-core';
+import ytSearch from 'yt-search';
 
-const queue = new Map(); // guildId => { voiceChannel, connection, player, songs, timeout }
+const { SlashCommandBuilder } = Discord;
 
-export const data = new SlashCommandBuilder()
-  .setName('music')
-  .setDescription('Music commands')
-  .addSubcommand(sub =>
-    sub.setName('connect').setDescription('Join your voice channel'))
-  .addSubcommand(sub =>
-    sub.setName('disconnect').setDescription('Leave voice channel and clear queue'))
-  // You can add play/pause/skip commands here later
+const queue = new Map();
 
-export async function execute(interaction) {
-  const subcommand = interaction.options.getSubcommand();
-  const guildId = interaction.guildId;
-  let serverQueue = queue.get(guildId);
+export default {
+  data: new SlashCommandBuilder()
+    .setName('music')
+    .setDescription('Play music from YouTube')
+    .addStringOption(option =>
+      option.setName('query').setDescription('Song name or URL').setRequired(true)
+    ),
 
-  if (subcommand === 'connect') {
-    const memberVoiceChannel = interaction.member.voice.channel;
-    if (!memberVoiceChannel) {
-      return interaction.reply({ content: 'You need to be in a voice channel first!', ephemeral: true });
-    }
+  async execute(interaction) {
+    const voiceChannel = interaction.member.voice.channel;
+    if (!voiceChannel)
+      return interaction.reply('You need to be in a voice channel to play music! 🎧');
 
-    if (serverQueue && serverQueue.connection.state.status !== VoiceConnectionStatus.Destroyed) {
-      return interaction.reply({ content: 'Already connected to a voice channel!', ephemeral: true });
-    }
+    const permissions = voiceChannel.permissionsFor(interaction.client.user);
+    if (!permissions.has('Connect') || !permissions.has('Speak'))
+      return interaction.reply('I need permissions to join and speak in your voice channel! 🔊');
 
-    // Join voice channel
-    const connection = joinVoiceChannel({
-      channelId: memberVoiceChannel.id,
-      guildId: guildId,
-      adapterCreator: interaction.guild.voiceAdapterCreator,
-      selfDeaf: false,
-    });
+    const query = interaction.options.getString('query');
 
-    try {
-      await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
-    } catch {
-      connection.destroy();
-      return interaction.reply({ content: 'Failed to join voice channel within 20 seconds.', ephemeral: true });
-    }
+    let serverQueue = queue.get(interaction.guild.id);
 
-    // Create audio player
-    const player = createAudioPlayer();
+    const songInfo = await getSongInfo(query);
+    if (!songInfo) return interaction.reply('No results found for that song! 😕');
 
-    connection.subscribe(player);
+    const song = {
+      title: songInfo.title,
+      url: songInfo.video_url,
+    };
 
-    // Setup server queue
-    queue.set(guildId, {
-      voiceChannel: memberVoiceChannel,
-      connection,
-      player,
-      songs: [],
-      leaveTimeout: null,
-    });
-
-    interaction.reply({ content: `Joined ${memberVoiceChannel.name} and ready to play music! 🎶` });
-  }
-  else if (subcommand === 'disconnect') {
     if (!serverQueue) {
-      return interaction.reply({ content: 'Not connected to any voice channel!', ephemeral: true });
+      const queueContruct = {
+        textChannel: interaction.channel,
+        voiceChannel: voiceChannel,
+        connection: null,
+        player: null,
+        songs: [],
+        playing: true,
+      };
+
+      queue.set(interaction.guild.id, queueContruct);
+
+      queueContruct.songs.push(song);
+
+      try {
+        const connection = joinVoiceChannel({
+          channelId: voiceChannel.id,
+          guildId: interaction.guild.id,
+          adapterCreator: interaction.guild.voiceAdapterCreator,
+        });
+        queueContruct.connection = connection;
+        queueContruct.player = createAudioPlayer();
+
+        connection.subscribe(queueContruct.player);
+
+        playSong(interaction.guild, queueContruct.songs[0]);
+
+        interaction.reply(`🎶 Now playing: **${song.title}**`);
+      } catch (err) {
+        console.error(err);
+        queue.delete(interaction.guild.id);
+        return interaction.reply('Error connecting to the voice channel! ❌');
+      }
+    } else {
+      serverQueue.songs.push(song);
+      return interaction.reply(`✅ **${song.title}** has been added to the queue!`);
     }
+  },
+};
 
-    if (serverQueue.leaveTimeout) {
-      clearTimeout(serverQueue.leaveTimeout);
-    }
-
-    serverQueue.player.stop();
-    serverQueue.connection.destroy();
-    queue.delete(guildId);
-
-    interaction.reply({ content: 'Disconnected and cleared the queue. Bye! 👋' });
+async function getSongInfo(query) {
+  if (ytdl.validateURL(query)) {
+    // If it's a URL, get info directly
+    const info = await ytdl.getInfo(query);
+    return info.videoDetails;
+  } else {
+    // Else, search YouTube
+    const result = await ytSearch(query);
+    if (result && result.videos.length > 0) return result.videos[0];
+    else return null;
   }
 }
 
-// Play a song function example (call this in your play command logic)
-export function playSong(guild, song) {
+async function playSong(guild, song) {
   const serverQueue = queue.get(guild.id);
-
-  if (!serverQueue) return;
-
   if (!song) {
-    // Start leave timer for 45 seconds if no song to play
-    serverQueue.leaveTimeout = setTimeout(() => {
-      serverQueue.connection.destroy();
-      queue.delete(guild.id);
-      console.log(`Left voice channel in guild ${guild.id} due to inactivity.`);
-    }, 45_000);
+    serverQueue.voiceChannel.leave?.(); // Leave voice channel if no song
+    queue.delete(guild.id);
     return;
-  }
-
-  // If leave timer exists (like was about to leave), cancel it because we got a song now
-  if (serverQueue.leaveTimeout) {
-    clearTimeout(serverQueue.leaveTimeout);
-    serverQueue.leaveTimeout = null;
   }
 
   const stream = ytdl(song.url, {
     filter: 'audioonly',
     quality: 'highestaudio',
-    highWaterMark: 1 << 25,
-    requestOptions: {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-      },
-    },
-    dlChunkSize: 0,
-  });
-
-  stream.on('error', error => {
-    console.error('Stream error:', error);
-    serverQueue.songs.shift(); // remove problematic song
-    playSong(guild, serverQueue.songs[0]);
+    highWaterMark: 1 << 25, // big buffer for smoother playback
   });
 
   const resource = createAudioResource(stream);
@@ -137,7 +120,7 @@ export function playSong(guild, song) {
   });
 
   serverQueue.player.once('error', error => {
-    console.error('Audio Player Error:', error);
+    console.error(`Error: ${error.message} with resource ${song.title}`);
     serverQueue.songs.shift();
     playSong(guild, serverQueue.songs[0]);
   });
