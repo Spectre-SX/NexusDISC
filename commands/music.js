@@ -1,140 +1,143 @@
-import {
+import { 
   SlashCommandBuilder,
+  ChatInputCommandInteraction,
+  VoiceBasedChannel
 } from 'discord.js';
-
 import {
   joinVoiceChannel,
   createAudioPlayer,
   createAudioResource,
   AudioPlayerStatus,
-  NoSubscriberBehavior,
+  entersState,
+  VoiceConnectionStatus,
 } from '@discordjs/voice';
-
 import ytdl from 'ytdl-core';
 
-const queue = new Map();
+const queue = new Map(); // guildId => { voiceChannel, connection, player, songs, timeout }
 
-export default {
-  data: new SlashCommandBuilder()
-    .setName('music')
-    .setDescription('Music commands: play, pause, resume, skip')
-    .addSubcommand(sub =>
-      sub.setName('play')
-        .setDescription('Play a song from YouTube URL')
-        .addStringOption(option =>
-          option.setName('url')
-            .setDescription('YouTube URL')
-            .setRequired(true)
-        ))
-    .addSubcommand(sub => sub.setName('pause').setDescription('Pause the music'))
-    .addSubcommand(sub => sub.setName('resume').setDescription('Resume the music'))
-    .addSubcommand(sub => sub.setName('skip').setDescription('Skip current song')),
+export const data = new SlashCommandBuilder()
+  .setName('music')
+  .setDescription('Music commands')
+  .addSubcommand(sub =>
+    sub.setName('connect').setDescription('Join your voice channel'))
+  .addSubcommand(sub =>
+    sub.setName('disconnect').setDescription('Leave voice channel and clear queue'))
+  // You can add play/pause/skip commands here later
 
-  async execute(interaction) {
-    const subcommand = interaction.options.getSubcommand();
-    const voiceChannel = interaction.member.voice.channel;
+export async function execute(interaction) {
+  const subcommand = interaction.options.getSubcommand();
+  const guildId = interaction.guildId;
+  let serverQueue = queue.get(guildId);
 
-    if (!voiceChannel) {
-      return interaction.reply({ content: '❌ You need to be in a voice channel to use music commands!', ephemeral: true });
+  if (subcommand === 'connect') {
+    const memberVoiceChannel = interaction.member.voice.channel;
+    if (!memberVoiceChannel) {
+      return interaction.reply({ content: 'You need to be in a voice channel first!', ephemeral: true });
     }
 
-    const serverQueue = queue.get(interaction.guild.id);
-
-    if (subcommand === 'play') {
-      const url = interaction.options.getString('url');
-
-      if (!ytdl.validateURL(url)) {
-        return interaction.reply({ content: '❌ Please provide a valid YouTube URL.', ephemeral: true });
-      }
-
-      if (!serverQueue) {
-        // Create queue structure
-        const queueContruct = {
-          voiceChannel,
-          connection: null,
-          player: null,
-          songs: [],
-          playing: true,
-        };
-
-        queue.set(interaction.guild.id, queueContruct);
-
-        queueContruct.songs.push({ url });
-
-        try {
-          // Join voice channel
-          const connection = joinVoiceChannel({
-            channelId: voiceChannel.id,
-            guildId: interaction.guild.id,
-            adapterCreator: interaction.guild.voiceAdapterCreator,
-          });
-          queueContruct.connection = connection;
-
-          // Create audio player
-          const player = createAudioPlayer({
-            behaviors: {
-              noSubscriber: NoSubscriberBehavior.Pause,
-            },
-          });
-          queueContruct.player = player;
-
-          connection.subscribe(player);
-
-          playSong(interaction.guild, queueContruct.songs[0]);
-
-          return interaction.reply({ content: `🎶 Playing your song!`, ephemeral: true });
-        } catch (error) {
-          console.error(error);
-          queue.delete(interaction.guild.id);
-          return interaction.reply({ content: '❌ Error connecting to the voice channel.', ephemeral: true });
-        }
-      } else {
-        serverQueue.songs.push({ url });
-        return interaction.reply({ content: `✅ Song added to the queue! Position: ${serverQueue.songs.length}`, ephemeral: true });
-      }
-    } else if (subcommand === 'pause') {
-      if (!serverQueue || !serverQueue.player) {
-        return interaction.reply({ content: '❌ Nothing is playing right now.', ephemeral: true });
-      }
-      serverQueue.player.pause();
-      return interaction.reply({ content: '⏸️ Music paused.', ephemeral: true });
-    } else if (subcommand === 'resume') {
-      if (!serverQueue || !serverQueue.player) {
-        return interaction.reply({ content: '❌ Nothing is playing right now.', ephemeral: true });
-      }
-      serverQueue.player.unpause();
-      return interaction.reply({ content: '▶️ Music resumed.', ephemeral: true });
-    } else if (subcommand === 'skip') {
-      if (!serverQueue || !serverQueue.player) {
-        return interaction.reply({ content: '❌ Nothing is playing right now.', ephemeral: true });
-      }
-      if (serverQueue.songs.length > 1) {
-        serverQueue.songs.shift();
-        playSong(interaction.guild, serverQueue.songs[0]);
-        return interaction.reply({ content: '⏭️ Skipped to next song.', ephemeral: true });
-      } else {
-        serverQueue.player.stop();
-        queue.delete(interaction.guild.id);
-        return interaction.reply({ content: '🛑 No more songs in queue, leaving the voice channel.', ephemeral: true });
-      }
+    if (serverQueue && serverQueue.connection.state.status !== VoiceConnectionStatus.Destroyed) {
+      return interaction.reply({ content: 'Already connected to a voice channel!', ephemeral: true });
     }
-  },
-};
 
-function playSong(guild, song) {
-  const serverQueue = queue.get(guild.id);
-  if (!song) {
+    // Join voice channel
+    const connection = joinVoiceChannel({
+      channelId: memberVoiceChannel.id,
+      guildId: guildId,
+      adapterCreator: interaction.guild.voiceAdapterCreator,
+      selfDeaf: false,
+    });
+
+    try {
+      await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
+    } catch {
+      connection.destroy();
+      return interaction.reply({ content: 'Failed to join voice channel within 20 seconds.', ephemeral: true });
+    }
+
+    // Create audio player
+    const player = createAudioPlayer();
+
+    connection.subscribe(player);
+
+    // Setup server queue
+    queue.set(guildId, {
+      voiceChannel: memberVoiceChannel,
+      connection,
+      player,
+      songs: [],
+      leaveTimeout: null,
+    });
+
+    interaction.reply({ content: `Joined ${memberVoiceChannel.name} and ready to play music! 🎶` });
+  }
+  else if (subcommand === 'disconnect') {
+    if (!serverQueue) {
+      return interaction.reply({ content: 'Not connected to any voice channel!', ephemeral: true });
+    }
+
+    if (serverQueue.leaveTimeout) {
+      clearTimeout(serverQueue.leaveTimeout);
+    }
+
+    serverQueue.player.stop();
     serverQueue.connection.destroy();
-    queue.delete(guild.id);
+    queue.delete(guildId);
+
+    interaction.reply({ content: 'Disconnected and cleared the queue. Bye! 👋' });
+  }
+}
+
+// Play a song function example (call this in your play command logic)
+export function playSong(guild, song) {
+  const serverQueue = queue.get(guild.id);
+
+  if (!serverQueue) return;
+
+  if (!song) {
+    // Start leave timer for 45 seconds if no song to play
+    serverQueue.leaveTimeout = setTimeout(() => {
+      serverQueue.connection.destroy();
+      queue.delete(guild.id);
+      console.log(`Left voice channel in guild ${guild.id} due to inactivity.`);
+    }, 45_000);
     return;
   }
 
-  const stream = ytdl(song.url, { filter: 'audioonly', quality: 'highestaudio', highWaterMark: 1 << 25 });
+  // If leave timer exists (like was about to leave), cancel it because we got a song now
+  if (serverQueue.leaveTimeout) {
+    clearTimeout(serverQueue.leaveTimeout);
+    serverQueue.leaveTimeout = null;
+  }
+
+  const stream = ytdl(song.url, {
+    filter: 'audioonly',
+    quality: 'highestaudio',
+    highWaterMark: 1 << 25,
+    requestOptions: {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+      },
+    },
+    dlChunkSize: 0,
+  });
+
+  stream.on('error', error => {
+    console.error('Stream error:', error);
+    serverQueue.songs.shift(); // remove problematic song
+    playSong(guild, serverQueue.songs[0]);
+  });
+
   const resource = createAudioResource(stream);
 
   serverQueue.player.play(resource);
 
   serverQueue.player.once(AudioPlayerStatus.Idle, () => {
+    serverQueue.songs.shift();
+    playSong(guild, serverQueue.songs[0]);
+  });
+
+  serverQueue.player.once('error', error => {
+    console.error('Audio Player Error:', error);
     serverQueue.songs.shift();
     playSong(guild, serverQueue.songs[0]);
   });
