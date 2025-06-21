@@ -4,7 +4,6 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ComponentType,
 } from 'discord.js';
 
 const countries = {
@@ -58,7 +57,6 @@ const countries = {
   ],
 };
 
-// Helper to get random country from difficulty pool
 function getRandomCountry(difficulty) {
   const pool = countries[difficulty];
   return pool[Math.floor(Math.random() * pool.length)];
@@ -76,7 +74,7 @@ export default {
         .setDescription('Start a flag guessing game'),
     ),
 
-  async execute(interaction, client) {
+  async execute(interaction) {
     if (interaction.options.getSubcommand() === 'game') {
       const embed = new EmbedBuilder()
         .setTitle('Flag Guessing Game 🎌')
@@ -106,11 +104,15 @@ export default {
 
       await interaction.reply({ embeds: [embed], components: [buttons] });
 
+      // Create collector for button interaction on this reply message
+      const message = await interaction.fetchReply();
+
       const filter = i => i.user.id === interaction.user.id && i.customId.startsWith('flag_');
-      const collector = interaction.channel.createMessageComponentCollector({ filter, time: 60000, max: 1 });
+
+      const collector = message.createMessageComponentCollector({ filter, time: 60000, max: 1 });
 
       collector.on('collect', async i => {
-        await i.deferUpdate();
+        await i.deferUpdate(); // defer the button interaction to avoid "interaction failed"
 
         const difficulty = i.customId.split('_')[1];
 
@@ -120,9 +122,11 @@ export default {
         async function playRound() {
           currentRound++;
           if (currentRound > roundsPerGame) {
-            return i.followUp({
+            // End game message
+            return i.editReply({
               content: `Game over! Your score: **${score} / ${roundsPerGame}**`,
-              ephemeral: true,
+              embeds: [],
+              components: [],
             });
           }
 
@@ -135,25 +139,30 @@ export default {
             .setImage(flagUrl)
             .setColor('Random');
 
-          await i.followUp({ embeds: [roundEmbed], ephemeral: true });
+          await i.editReply({ content: null, embeds: [roundEmbed], components: [] });
 
-          // Wait for the user's message guess
+          // Wait for the user's guess in chat
           const messageFilter = m => m.author.id === interaction.user.id;
-          const collected = await interaction.channel.awaitMessages({ filter: messageFilter, max: 1, time: 30000, errors: ['time'] }).catch(() => null);
+          const collectedMsg = await interaction.channel.awaitMessages({
+            filter: messageFilter,
+            max: 1,
+            time: 30000,
+            errors: ['time'],
+          }).catch(() => null);
 
-          if (!collected) {
-            await i.followUp({ content: 'Time is up! Moving to next round...', ephemeral: true });
+          if (!collectedMsg) {
+            await interaction.followUp({ content: '⏰ Time is up! Moving to next round...', ephemeral: true });
             return playRound();
           }
 
-          const guess = collected.first().content.toLowerCase().trim();
+          const guess = collectedMsg.first().content.toLowerCase().trim();
           const answer = country.name.toLowerCase();
 
           if (guess === answer) {
             score++;
-            await i.followUp({ content: `✅ Correct! The answer was **${country.name}**.`, ephemeral: true });
+            await interaction.followUp({ content: `✅ Correct! The answer was **${country.name}**.`, ephemeral: true });
           } else {
-            await i.followUp({ content: `❌ Wrong! The answer was **${country.name}**.`, ephemeral: true });
+            await interaction.followUp({ content: `❌ Wrong! The answer was **${country.name}**.`, ephemeral: true });
           }
 
           playRound();
@@ -164,7 +173,7 @@ export default {
 
       collector.on('end', collected => {
         if (collected.size === 0) {
-          interaction.editReply({ content: 'No difficulty selected, game cancelled.', components: [] });
+          interaction.editReply({ content: 'No difficulty selected, game cancelled.', embeds: [], components: [] });
         }
       });
     }
