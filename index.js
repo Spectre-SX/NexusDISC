@@ -1,15 +1,15 @@
+import 'dotenv/config'; // auto-load .env
 import express from 'express';
 import { Client, GatewayIntentBits, Collection, Events, REST, Routes } from 'discord.js';
 import fs from 'fs';
 import path from 'path';
-import 'dotenv/config';
 
 // === Start Web Server (for Render pinging) ===
 const app = express();
 const port = process.env.PORT || 10000;
 
 app.get('/', (req, res) => {
-  res.send('Nexus bot is online 🔥');
+  res.send('RugBot is online 🔥');
 });
 
 app.listen(port, () => {
@@ -84,7 +84,7 @@ async function registerCommands() {
 
 // === Event: Bot is Ready ===
 client.once(Events.ClientReady, () => {
-  console.log(`✅ Logged in as ${client.user.tag}! Nexus is online!`);
+  console.log(`✅ Logged in as ${client.user.tag}! RugBot is online!`);
 });
 
 // === Event: Command Interaction ===
