@@ -1,5 +1,3 @@
-// VERSION BETA - ONLY SUBMITS COMMANDS TO ONE SERVER
-
 import express from 'express';
 import { Client, GatewayIntentBits, Collection, Events, REST, Routes } from 'discord.js';
 import fs from 'fs';
