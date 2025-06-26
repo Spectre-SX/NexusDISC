@@ -1,22 +1,15 @@
-import 'dotenv/config';
 import express from 'express';
-import { Client, GatewayIntentBits, Collection, Events, REST, Routes } from 'discord.js';
-import fs from 'fs';
-import path from 'path';
+import { config } from 'dotenv';
+import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } from 'discord.js';
 
-// === Start Web Server (for Render pinging) ===
+config(); // Load .env variables
+
 const app = express();
-const port = process.env.PORT || 10000;
-
 app.get('/', (req, res) => {
-  res.send('Nexus bot is online 🔥');
+  res.send('Bot is live!');
 });
+app.listen(process.env.PORT || 3000);
 
-app.listen(port, () => {
-  console.log(`🌐 Web server listening on port ${port}`);
-});
-
-// === Create Discord Client ===
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -25,84 +18,48 @@ const client = new Client({
   ]
 });
 
-client.commands = new Collection();
+// Setup slash commands
+const commands = [
+  new SlashCommandBuilder()
+    .setName('ping')
+    .setDescription('Replies with pong'),
+  new SlashCommandBuilder()
+    .setName('coin')
+    .setDescription('RugPlay coin lookup')
+    .addStringOption(option =>
+      option.setName('symbol').setDescription('Coin symbol').setRequired(true)
+    )
+].map(cmd => cmd.toJSON());
 
-// === Load Commands from /commands folder ===
-const commandsPath = path.join(process.cwd(), 'commands');
-const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
+const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
-for (const file of commandFiles) {
-  const filePath = path.join(commandsPath, file);
-  try {
-    const commandModule = await import(`file://${filePath}`);
-    const command = commandModule.default ?? commandModule;
-
-    if (!command.data || !command.execute) {
-      console.warn(`⚠️ Skipping '${file}' - invalid command structure`);
-      continue;
-    }
-
-    client.commands.set(command.data.name, command);
-  } catch (error) {
-    console.error(`❌ Failed to load command '${file}':`, error);
-  }
-}
-
-// === Register Slash Commands Per-Guild ===
-async function registerCommands() {
-  const commands = [];
-  for (const file of commandFiles) {
-    const filePath = path.join(commandsPath, file);
-    try {
-      const commandModule = await import(`file://${filePath}`);
-      const command = commandModule.default ?? commandModule;
-
-      if (!command.data || !command.execute) {
-        console.warn(`⚠️ Skipping '${file}' during registration`);
-        continue;
-      }
-
-      commands.push(command.data.toJSON());
-    } catch (error) {
-      console.error(`❌ Failed to import command '${file}' during registration:`, error);
-    }
-  }
-
-  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+client.once('ready', async () => {
+  console.log(`✅ Logged in as ${client.user.tag}`);
 
   try {
-    console.log('🔁 Registering GUILD slash commands...');
     await rest.put(
-      Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
+      Routes.applicationCommands(process.env.CLIENT_ID),
       { body: commands }
     );
-    console.log('✅ Slash commands registered to GUILD!');
-  } catch (error) {
-    console.error('❌ Failed to register commands:', error);
-  }
-}
-
-// === Event: Bot is Ready ===
-client.once(Events.ClientReady, () => {
-  console.log(`✅ Logged in as ${client.user.tag}! Nexus is online!`);
-});
-
-// === Event: Command Interaction ===
-client.on(Events.InteractionCreate, async interaction => {
-  if (!interaction.isCommand()) return;
-
-  const command = client.commands.get(interaction.commandName);
-
-  if (!command) return;
-
-  try {
-    await command.execute(interaction);
-  } catch (error) {
-    console.error('❌ Error executing command:', error);
-    await interaction.reply({ content: 'There was an error executing this command 😢', ephemeral: true });
+    console.log('🟢 Slash commands registered.');
+  } catch (err) {
+    console.error('❌ Error registering commands:', err);
   }
 });
 
-// === Start Everything ===
-await registerCommands();
-client.login(process.env.DISCORD_TOKEN);
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isChatInputCommand()) return;
+
+  const { commandName, options } = interaction;
+
+  if (commandName === 'ping') {
+    await interaction.reply('Pong!');
+  } else if (commandName === 'coin') {
+    const symbol = options.getString('symbol');
+    // fake response for now:
+    await interaction.reply(`Searching RugPlay for **${symbol}**...`);
+    // TODO: fetch actual data from RugPlay API here
+  }
+});
+
+client.login(process.env.TOKEN);
